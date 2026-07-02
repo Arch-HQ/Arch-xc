@@ -10,34 +10,42 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js start",
-    "dev": "tsx src/cli.tsx"
+    "dev": "tsx src/cli.tsx",
+    "test": "node --import tsx --test src/core/__tests__/tools.test.ts"
   },
-  "keywords": ["ai", "engineering", "agent", "swarm", "tui"],
+  "keywords": [
+    "ai",
+    "engineering",
+    "agent",
+    "swarm",
+    "tui"
+  ],
   "author": "Arch XC",
   "license": "MIT",
   "dependencies": {
+    "axios": "^1.8.0",
+    "boxen": "^8.0.1",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "conf": "^13.1.0",
+    "fast-glob": "^3.3.3",
+    "figlet": "^1.8.0",
     "ink": "^5.2.0",
-    "ink-text-input": "^6.0.0",
-    "ink-select-input": "^6.1.0",
-    "ink-spinner": "^5.0.0",
     "ink-big-text": "^2.0.0",
     "ink-gradient": "^3.0.0",
-    "react": "^18.3.1",
-    "chalk": "^5.4.1",
-    "conf": "^13.1.0",
-    "axios": "^1.8.0",
-    "zustand": "^5.0.3",
-    "commander": "^13.1.0",
+    "ink-select-input": "^6.1.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
     "ora": "^8.2.0",
-    "boxen": "^8.0.1",
-    "figlet": "^1.8.0"
+    "react": "^18.3.1",
+    "zustand": "^5.0.3"
   },
   "devDependencies": {
-    "@types/react": "^18.3.18",
-    "@types/node": "^22.15.0",
     "@types/figlet": "^1.7.0",
-    "typescript": "^5.8.0",
-    "tsx": "^4.19.0"
+    "@types/node": "^22.20.0",
+    "@types/react": "^18.3.18",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
   },
   "engines": {
     "node": ">=18.0.0"

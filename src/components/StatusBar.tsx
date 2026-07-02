@@ -2,13 +2,6 @@ import React from "react";
 import { Box, Text, useStdout } from "ink";
 import { useStore } from "../store/index.js";
 
-/**
- * StatusBar — Bottom status bar.
- * Left:  "Arch XC v0.1.0" in dim gray.
- * Center: Current status message ("Ready", "Executing ALTR-X...", etc.).
- * Right:  Keyboard hints (^C Quit | Tab Focus | /cmd Command) in dim gray.
- */
-
 export function StatusBar(): JSX.Element {
   const { stdout } = useStdout();
   const isExecuting = useStore((s) => s.isExecuting);
@@ -18,7 +11,6 @@ export function StatusBar(): JSX.Element {
   const screen = useStore((s) => s.screen);
   const width = stdout.columns || 80;
 
-  // Determine center status message
   let statusMessage = "Ready";
   if (isExecuting) {
     statusMessage = `Executing ALTR-${currentAltrMode}...`;
@@ -30,7 +22,6 @@ export function StatusBar(): JSX.Element {
     statusMessage = "Connect mode — Tab to switch fields, Enter to submit";
   }
 
-  // Left and right fixed widths; center gets the remainder
   const leftText = "Arch XC v0.1.0";
   const rightText = "\u005E\u0043 Quit | Tab Focus | /cmd Command";
   const centerMinPad = 2;
@@ -51,14 +42,12 @@ export function StatusBar(): JSX.Element {
       borderBottom={false}
       borderColor="gray"
     >
-      {/* Left — Version */}
       <Box>
         <Text color="gray" dimColor>
           {leftText}
         </Text>
       </Box>
 
-      {/* Center — Status message */}
       <Box width={centerWidth} justifyContent="center">
         <Text
           color={isExecuting ? "yellowBright" : "cyan"}
@@ -70,7 +59,6 @@ export function StatusBar(): JSX.Element {
         </Text>
       </Box>
 
-      {/* Right — Keyboard hints */}
       <Box>
         <Text color="gray" dimColor>
           {rightText}

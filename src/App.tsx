@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Box, useInput, useStdout } from "ink";
+import { useInput } from "ink";
 import { SplashScreen } from "./components/SplashScreen.js";
 import { ConnectPopup } from "./components/ConnectPopup.js";
 import { MainScreen } from "./components/MainScreen.js";
@@ -11,13 +11,12 @@ interface AppProps {
 }
 
 export function App({ initialScreen }: AppProps): JSX.Element {
+  const [showSplash, setShowSplash] = useState(!initialScreen);
+
   const screen = useStore((s) => s.screen);
   const setScreen = useStore((s) => s.setScreen);
   const setConfig = useStore((s) => s.setConfig);
-  const setInputValue = useStore((s) => s.setInputValue);
-  const isExecuting = useStore((s) => s.isExecuting);
   const addLog = useStore((s) => s.addLog);
-  const [showSplash, setShowSplash] = useState(true);
 
   useEffect(() => {
     const config = loadConfig();
@@ -25,11 +24,9 @@ export function App({ initialScreen }: AppProps): JSX.Element {
 
     if (initialScreen) {
       setScreen(initialScreen);
-      setShowSplash(false);
       return;
     }
 
-    // Show splash for 2.5s then decide
     const timer = setTimeout(() => {
       setShowSplash(false);
       if (!isConnected()) {
@@ -44,7 +41,7 @@ export function App({ initialScreen }: AppProps): JSX.Element {
         addLog({
           level: "info",
           source: "App",
-          message: `API key loaded → entering main screen`,
+          message: "API key loaded → entering main screen",
         });
       }
     }, 2500);
@@ -52,25 +49,23 @@ export function App({ initialScreen }: AppProps): JSX.Element {
     return () => clearTimeout(timer);
   }, []);
 
-  // Global keyboard shortcuts
   useInput((input, key) => {
-    if (key.escape) {
-      if (screen === "connect") {
+    if (screen === "connect") return;
+
+    if (key.escape || input === "q" || input === "b") {
+      if (screen !== "main") {
         setScreen("main");
       }
     }
-
-    // Ctrl+C handled by ink automatically
   });
 
   if (showSplash) {
     return <SplashScreen />;
   }
 
-  return (
-    <Box flexDirection="column" width="100%" height="100%">
-      {screen === "connect" && <ConnectPopup />}
-      {screen === "main" && <MainScreen />}
-    </Box>
-  );
+  if (screen === "connect") {
+    return <ConnectPopup />;
+  }
+
+  return <MainScreen />;
 }

@@ -2,12 +2,8 @@ import React, { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import {
   MODEL_POOL,
-  getHeadModels,
-  getBoardModels,
-  getManagerModels,
   type ModelEntry,
 } from "../core/models.js";
-
 export function ModelView({ width, height }: { width: number; height: number }): JSX.Element {
   const [filter, setFilter] = useState<string>("all");
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -19,7 +15,13 @@ export function ModelView({ width, height }: { width: number; height: number }):
       ? MODEL_POOL
       : MODEL_POOL.filter((m) => m.tier === filter);
 
-  const visible = filtered.slice(0, Math.max(1, height - 4));
+  const viewportSize = Math.max(1, height - 5);
+  const safeIdx = Math.min(selectedIdx, Math.max(0, filtered.length - 1));
+  const scrollOffset = Math.min(
+    safeIdx,
+    Math.max(0, filtered.length - viewportSize)
+  );
+  const visible = filtered.slice(scrollOffset, scrollOffset + viewportSize);
 
   useInput((input, key) => {
     if (key.upArrow) {
@@ -39,10 +41,14 @@ export function ModelView({ width, height }: { width: number; height: number }):
 
   const tierBadge = (tier: string) => {
     switch (tier) {
-      case "head": return { text: "HEAD", color: "magentaBright" as const };
-      case "board": return { text: "BOARD", color: "yellowBright" as const };
-      case "manager": return { text: "MGR", color: "greenBright" as const };
-      default: return { text: tier.toUpperCase(), color: "white" as const };
+      case "head":
+        return { text: "HEAD", color: "magentaBright" as const };
+      case "board":
+        return { text: "BOARD", color: "yellowBright" as const };
+      case "manager":
+        return { text: "MGR", color: "greenBright" as const };
+      default:
+        return { text: tier.toUpperCase(), color: "white" as const };
     }
   };
 
@@ -52,41 +58,48 @@ export function ModelView({ width, height }: { width: number; height: number }):
         <Text bold color="cyanBright">
           Model Pool
         </Text>
-        <Text color="gray"> — {MODEL_POOL.length} models</Text>
+        <Text color="gray"> — {filtered.length} models</Text>
       </Box>
 
       {/* Filter tabs */}
       <Box flexDirection="row" marginBottom={1}>
-        {filters.map((f) => (
-          <Box key={f} marginRight={2}>
-            <Text
-              bold={f === filter}
-              color={f === filter ? "cyanBright" : "gray"}
-              backgroundColor={f === filter ? "cyan" : undefined}
-            >
-              {f === filter ? ` ${f.toUpperCase()} ` : ` ${f.toUpperCase()} `}
-            </Text>
-          </Box>
-        ))}
-        <Text color="gray" dimColor> ← → to filter</Text>
+        {filters.map((f) => {
+          const isSelected = f === filter;
+          return (
+            <Box key={f} marginRight={2}>
+              <Text
+                bold={isSelected}
+                color={isSelected ? "black" : "gray"}
+                backgroundColor={isSelected ? "cyan" : undefined}
+              >
+                {` ${f.toUpperCase()} `}
+              </Text>
+            </Box>
+          );
+        })}
+        <Text color="gray" dimColor>
+          {" "}
+          ← → to filter
+        </Text>
       </Box>
 
       {/* Model list */}
       <Box flexDirection="column">
         {visible.map((model, idx) => {
           const badge = tierBadge(model.tier);
-          const isSelected = idx === selectedIdx;
+          const actualIdx = scrollOffset + idx;
+          const isSelected = actualIdx === safeIdx;
           return (
-            <Box
-              key={model.id}
-              flexDirection="row"
-              height={1}
-            >
+            <Box key={model.id} flexDirection="row" height={1}>
               <Text color={badge.color} bold>
                 [{badge.text}]
               </Text>
-              <Text color={isSelected ? "white" : "gray"}>
-                {" "}{model.name.slice(0, 28).padEnd(30)}{" "}
+              <Text
+                color={isSelected ? "black" : "gray"}
+                backgroundColor={isSelected ? "cyan" : undefined}
+              >
+                {" "}
+                {model.name.slice(0, 28).padEnd(30)}{" "}
               </Text>
               <Text color="gray" dimColor>
                 {model.org.padEnd(12)}{" "}
@@ -97,6 +110,18 @@ export function ModelView({ width, height }: { width: number; height: number }):
             </Box>
           );
         })}
+      </Box>
+
+      {filtered.length === 0 && (
+        <Box marginTop={1}>
+          <Text color="gray">No models match the selected filter.</Text>
+        </Box>
+      )}
+
+      <Box marginTop={1}>
+        <Text color="gray" dimColor>
+          ↑↓ Navigate | ←→ Filter | Esc/q to go back
+        </Text>
       </Box>
     </Box>
   );

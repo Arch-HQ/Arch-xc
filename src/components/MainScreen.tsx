@@ -34,7 +34,6 @@ export function MainScreen(): JSX.Element {
   const statusHeight = 1;
   const contentHeight = height - headerHeight - inputHeight - statusHeight;
 
-  // Handle Tab to toggle sidebar focus
   useInput(
     (input, key) => {
       if (key.tab && !key.shift) {
@@ -46,9 +45,6 @@ export function MainScreen(): JSX.Element {
         const selected = views[sidebarItem];
         if (selected) {
           setActiveView(selected);
-          if (selected === "settings") {
-            setScreen("settings");
-          }
         }
         return;
       }
@@ -56,11 +52,10 @@ export function MainScreen(): JSX.Element {
     { isActive: true }
   );
 
-  // Sync sidebarItem changes to activeView
   useEffect(() => {
     const views: View[] = ["chat", "agents", "logs", "models", "settings"];
     const selected = views[sidebarItem];
-    if (selected && selected !== "settings") {
+    if (selected) {
       setActiveView(selected);
     }
   }, [sidebarItem]);
@@ -82,7 +77,6 @@ export function MainScreen(): JSX.Element {
 
   return (
     <Box flexDirection="column" width={width} height={height}>
-      {/* Header */}
       <Box height={headerHeight} flexDirection="row">
         <Box width={sidebarWidth} />
         <Box width={mainWidth}>
@@ -90,20 +84,15 @@ export function MainScreen(): JSX.Element {
         </Box>
       </Box>
 
-      {/* Content area */}
       <Box flexDirection="row" height={contentHeight}>
-        {/* Sidebar */}
         <Box width={sidebarWidth} height={contentHeight}>
           <Sidebar />
         </Box>
-
-        {/* Main content */}
         <Box width={mainWidth} height={contentHeight}>
           {renderContent()}
         </Box>
       </Box>
 
-      {/* Input bar */}
       <Box height={inputHeight} flexDirection="row">
         <Box width={sidebarWidth} />
         <Box width={mainWidth}>
@@ -111,7 +100,6 @@ export function MainScreen(): JSX.Element {
         </Box>
       </Box>
 
-      {/* Status bar */}
       <Box height={statusHeight} flexDirection="row">
         <Box width={sidebarWidth} />
         <Box width={mainWidth}>

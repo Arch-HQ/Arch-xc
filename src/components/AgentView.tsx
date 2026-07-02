@@ -1,9 +1,23 @@
-import React from "react";
-import { Box, Text } from "ink";
+import React, { useState } from "react";
+import { Box, Text, useInput } from "ink";
 import { useStore } from "../store/index.js";
 
 export function AgentView({ width, height }: { width: number; height: number }): JSX.Element {
   const agents = useStore((s) => s.agents);
+  const [selectedIdx, setSelectedIdx] = useState(0);
+
+  const viewportSize = Math.max(1, height - 3);
+  const safeIdx = Math.min(selectedIdx, Math.max(0, agents.length - 1));
+  const scrollOffset = Math.min(safeIdx, Math.max(0, agents.length - viewportSize));
+  const visible = agents.slice(scrollOffset, scrollOffset + viewportSize);
+
+  useInput((input, key) => {
+    if (key.upArrow) {
+      setSelectedIdx((i) => Math.max(0, i - 1));
+    } else if (key.downArrow) {
+      setSelectedIdx((i) => Math.min(agents.length - 1, i + 1));
+    }
+  });
 
   const statusIcon = (status: string) => {
     switch (status) {
@@ -48,7 +62,7 @@ export function AgentView({ width, height }: { width: number; height: number }):
         </Text>
       ) : (
         <Box flexDirection="column">
-          {agents.map((agent) => (
+          {visible.map((agent) => (
             <Box key={agent.id} flexDirection="column" marginBottom={1}>
               <Box flexDirection="row">
                 <Text color={statusColor(agent.status)}>
@@ -73,6 +87,12 @@ export function AgentView({ width, height }: { width: number; height: number }):
           ))}
         </Box>
       )}
+
+      <Box marginTop={1}>
+        <Text color="gray" dimColor>
+          ↑↓ Navigate | Esc/q to go back
+        </Text>
+      </Box>
     </Box>
   );
 }

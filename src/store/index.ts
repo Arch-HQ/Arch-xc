@@ -11,6 +11,8 @@ export interface Message {
   altrMode?: number;
   model?: string;
   status?: "streaming" | "done" | "error";
+  thinking?: string;
+  thinkingVisible?: boolean;
 }
 
 export interface AgentState {
@@ -34,7 +36,7 @@ export interface LogEntry {
 
 interface AppState {
   // Navigation
-  screen: "splash" | "connect" | "main" | "settings";
+  screen: "splash" | "connect" | "main" | "agents" | "logs" | "models" | "settings";
   setScreen: (s: AppState["screen"]) => void;
 
   // Config
@@ -46,6 +48,7 @@ interface AppState {
   addMessage: (m: Omit<Message, "id" | "timestamp">) => string;
   updateMessage: (id: string, partial: Partial<Message>) => void;
   clearMessages: () => void;
+  resetSession: () => void;
 
   // Agents
   agents: AgentState[];
@@ -53,6 +56,7 @@ interface AppState {
   updateAgent: (id: string, partial: Partial<AgentState>) => void;
   removeAgent: (id: string) => void;
   clearAgents: () => void;
+  cleanupAgents: () => void;
 
   // Logs
   logs: LogEntry[];
@@ -83,6 +87,8 @@ let msgIdCounter = 0;
 let agentIdCounter = 0;
 let logIdCounter = 0;
 
+const MAX_MESSAGES = 100;
+
 export const useStore = create<AppState>((set, get) => ({
   screen: "splash",
   setScreen: (s) => set({ screen: s }),
@@ -93,9 +99,19 @@ export const useStore = create<AppState>((set, get) => ({
   messages: [],
   addMessage: (m) => {
     const id = `msg-${++msgIdCounter}`;
-    set((state) => ({
-      messages: [...state.messages, { ...m, id, timestamp: Date.now() }],
-    }));
+    set((state) => {
+      let messages = [...state.messages, { ...m, id, timestamp: Date.now() }];
+      if (messages.length > MAX_MESSAGES) {
+        const firstStreaming = messages.findIndex((msg) => msg.status === "streaming");
+        const trimEnd = messages.length - MAX_MESSAGES;
+        if (firstStreaming >= 0 && firstStreaming < trimEnd) {
+          messages = messages.slice(firstStreaming + 1);
+        } else {
+          messages = messages.slice(trimEnd);
+        }
+      }
+      return { messages };
+    });
     return id;
   },
   updateMessage: (id, partial) =>
@@ -105,6 +121,7 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     })),
   clearMessages: () => set({ messages: [] }),
+  resetSession: () => set({ messages: [], agents: [], isExecuting: false }),
 
   agents: [],
   addAgent: (a) => {
@@ -125,6 +142,10 @@ export const useStore = create<AppState>((set, get) => ({
       agents: state.agents.filter((a) => a.id !== id),
     })),
   clearAgents: () => set({ agents: [] }),
+  cleanupAgents: () =>
+    set((state) => ({
+      agents: state.agents.filter((a) => a.status !== "done" || a.layer <= 1),
+    })),
 
   logs: [],
   addLog: (l) => {

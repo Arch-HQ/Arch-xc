@@ -9,13 +9,16 @@ const program = new Command();
 
 program.name("arch-xc").description("Arch XC — Autonomous Engineering AI Engine").version("0.1.0");
 
+const launch = () => {
+  loadConfig();
+  render(<App />);
+};
+
 program
-  .command("start")
+  .command("launch")
+  .alias("start")
   .description("Launch the Arch XC TUI")
-  .action(() => {
-    loadConfig();
-    render(<App />);
-  });
+  .action(launch);
 
 program
   .command("connect")
@@ -33,4 +36,9 @@ program
     process.exit(0);
   });
 
-program.parse();
+// `arch-xc` with no args launches the TUI
+if (process.argv.length <= 2) {
+  launch();
+} else {
+  program.parse();
+}

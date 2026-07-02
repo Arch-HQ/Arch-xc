@@ -2,9 +2,20 @@ import axios, { type AxiosResponse } from "axios";
 import { getApiKey, loadConfig } from "../utils/config.js";
 import { useStore } from "../store/index.js";
 
+export interface ToolCall {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
 }
 
 export interface ChatCompletionRequest {
@@ -51,7 +62,7 @@ function getHeaders(): Record<string, string> {
 export async function chatCompletion(
   model: string,
   messages: ChatMessage[],
-  opts: Partial<ChatCompletionRequest> = {}
+  opts: Partial<ChatCompletionRequest> & { signal?: AbortSignal } = {}
 ): Promise<ChatCompletionResponse> {
   const startTime = Date.now();
   const addLog = useStore.getState().addLog;
@@ -59,7 +70,7 @@ export async function chatCompletion(
   addLog({
     level: "debug",
     source: "NIM",
-    message: `→ ${model} | ${messages[messages.length - 1].content.slice(0, 80)}...`,
+    message: `→ ${model} | ${(messages[messages.length - 1].content ?? "").slice(0, 80)}...`,
   });
 
   try {
@@ -72,9 +83,10 @@ export async function chatCompletion(
         max_tokens: opts.max_tokens ?? 4096,
         top_p: opts.top_p ?? 0.9,
         stream: false,
-        ...opts,
+        tools: opts.tools,
+        tool_choice: opts.tool_choice,
       } as ChatCompletionRequest,
-      { headers: getHeaders(), timeout: 120000 }
+      { headers: getHeaders(), timeout: 120000, signal: opts.signal }
     );
 
     const elapsed = Date.now() - startTime;
@@ -86,7 +98,11 @@ export async function chatCompletion(
 
     return resp.data;
   } catch (err: unknown) {
-    const axiosErr = err as { response?: { status?: number; data?: unknown }; message: string };
+    const axiosErr = err as { response?: { status?: number; data?: unknown }; message: string; code?: string };
+    if (axiosErr.code === "ERR_CANCELED" || axiosErr.message.includes("aborted")) {
+      addLog({ level: "warn", source: "NIM", message: `✗ ${model} | request aborted (timeout)` });
+      throw new Error(`Request timed out: ${model}`);
+    }
     const status = axiosErr.response?.status;
     const detail = JSON.stringify(axiosErr.response?.data ?? axiosErr.message);
     addLog({
@@ -107,7 +123,7 @@ export async function* streamCompletion(
   addLog({
     level: "debug",
     source: "NIM",
-    message: `→ stream ${model} | ${messages[messages.length - 1].content.slice(0, 60)}...`,
+    message: `→ stream ${model} | ${(messages[messages.length - 1].content ?? "").slice(0, 60)}...`,
   });
 
   try {

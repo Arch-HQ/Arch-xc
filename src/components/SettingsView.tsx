@@ -72,6 +72,14 @@ export function SettingsView({ width, height }: { width: number; height: number 
         setConfig({ ...loadConfig(), ...newConfig });
         setShowSaved(true);
         setTimeout(() => setShowSaved(false), 1500);
+      } else if (selectedIdx === 2) {
+        // Toggle theme
+        const newTheme: "dark" | "light" = config?.theme === "dark" ? "light" : "dark";
+        const newConfig = { ...config, theme: newTheme };
+        saveConfig(newConfig);
+        setConfig({ ...loadConfig(), ...newConfig });
+        setShowSaved(true);
+        setTimeout(() => setShowSaved(false), 1500);
       }
     } else if (key.escape) {
       setScreen("main");
@@ -118,7 +126,7 @@ export function SettingsView({ width, height }: { width: number; height: number 
 
       <Box marginTop={2}>
         <Text color="gray" dimColor>
-          ↑↓ Navigate | Enter toggle | Esc back to chat
+          ↑↓ Navigate | Enter toggle | Esc/q to go back
         </Text>
       </Box>
     </Box>

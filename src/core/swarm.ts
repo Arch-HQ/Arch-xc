@@ -3,39 +3,45 @@ import {
   getHeadModels,
   getBoardModels,
   pickModelForTask,
-  type ModelEntry,
 } from "./models.js";
-import { useStore, type Message } from "../store/index.js";
+import { TOOLS, executeTool } from "./tools.js";
+import { useStore } from "../store/index.js";
+import fs from "node:fs";
 
-const HEAD_SYSTEM = `You are the HEAD of Arch XC — the top strategic planning layer.
-Your job:
-1. Analyze the user's request and determine execution depth (ALTR 1/2/3)
-2. Create a clear, structured plan broken into sub-tasks
-3. Assign each sub-task to the appropriate Board domain specialist
+const HEAD_SYSTEM = `You are Arch, a coding AI assistant. You are aware of the user's environment (directory, platform) and can answer questions about it.
+You do NOT run commands or execute code yourself.
+You analyze requests and either respond conversationally or create structured plans.
 
-Board domains:
-- Engineering: Code, architecture, system design, DevOps
-- Analysis: Research, debugging, optimization, review
-- Creative: UI/UX, naming, documentation, user-facing content
-- Strategy: Planning, trade-offs, decision-making, prioritization
-- Validation: Testing, security audit, code review, verification
+For simple questions (greetings, chat, asking about yourself, quick info):
+  Respond directly and conversationally.
+  DO NOT include ALTR:, THOUGHT:, or PLAN: sections for simple tasks.
 
-Output ONLY a structured plan. Use this format:
----
-ALTR: <1|2|3>
-THOUGHT: <brief reasoning>
-PLAN:
-1. [DOMAIN] <task description>
-2. [DOMAIN] <task description>
----`;
+For complex tasks (building projects, multi-step changes, architecture):
+  Create a structured plan with ALTR:, THOUGHT:, and PLAN: sections.
 
-const BOARD_SYSTEM = `You are a BOARD member of Arch XC — a domain specialist.
-Execute your assigned task with expertise. You can:
-1. Produce code directly
-2. Request Manager assistance for sub-tasks
-3. Validate and critique outputs from other agents
+  ALTR controls the depth of delegation:
+    ALTR: 1 — Single round of board specialists. Use for moderate complexity (e.g. scaffold a project, write a single feature).
+    ALTR: 2 — Board + managers can spawn sub-agents. Use for complex multi-step tasks (e.g. full auth system, API + frontend).
+    ALTR: 3 — Deep multi-layer recursion. Use for very large or architectural tasks spanning many files.
 
-Be concise, expert-level, and actionable. Output your best work.`;
+  THOUGHT: A brief analysis of the request.
+
+  PLAN: section with numbered tasks:
+    1. [Domain] task description
+
+Available domains: Engineering, Analysis, Creative, Strategy, Validation
+
+IMPORTANT RULE: You do NOT output JSON like {"tool": "..."}. You only respond in plain English or with structured PLAN sections when needed.`;
+
+const BOARD_SYSTEM = `You are a domain specialist with filesystem access.
+Complete your assigned task. You may use tools if they are available, but respond with text either way.
+Be concise and actionable.`;
+
+const MAX_TOOL_ROUNDS = 15;
+const MAX_TASKS = 3;
+const HEAD_TIMEOUT = 60000;
+const BOARD_TIMEOUT = 120000;
+const MANAGER_TIMEOUT = 120000;
 
 interface PlanResult {
   altrMode: 1 | 2 | 3;
@@ -64,21 +70,117 @@ function parsePlan(content: string): PlanResult {
       inPlan = true;
     } else if (inPlan && /^\d+\.\s*\[/.test(trimmed)) {
       const match = trimmed.match(/^\d+\.\s*\[([^\]]+)\]\s*(.+)$/);
-      if (match) {
+      if (match && tasks.length < MAX_TASKS) {
         tasks.push({ domain: match[1].trim(), description: match[2].trim() });
       }
+    } else if (inPlan && /^\d+\.\s/.test(trimmed) && tasks.length === 0) {
+      const text = trimmed.replace(/^\d+\.\s*/, "");
+      tasks.push({ domain: "Engineering", description: text });
+      break;
     }
   }
 
   if (tasks.length === 0) {
-    // Fallback: treat entire content as single engineering task
     tasks.push({ domain: "Engineering", description: content });
   }
 
   return { altrMode, thought, tasks };
 }
 
-export async function executeSwarm(userInput: string, forcedAltr?: 1 | 2 | 3): Promise<void> {
+function isConversational(text: string): boolean {
+  if (text.includes("PLAN:") || text.includes("ALTR:")) return false;
+  return true;
+}
+
+function sanitizeHeadResponse(text: string): string {
+  // Strip JSON tool call patterns like {"tool": "cwd", "args": {}}
+  let cleaned = text.replace(/\{"tool":\s*"[^"]*"\s*(?:,.*?)?\}\s*/gs, "");
+  // Strip any remaining bare JSON objects that look like tool calls
+  cleaned = cleaned.replace(/\{\s*"tool"\s*:\s*"[^"]*"\s*\}\s*/g, "");
+  return cleaned.trim();
+}
+
+function buildConversationContext(history?: ChatMessage[]): string {
+  if (!history || history.length === 0) return "";
+  const lines: string[] = ["Previous conversation:"];
+  for (const msg of history) {
+    const label = msg.role === "user" ? "User" : "Arch";
+    const preview = (msg.content ?? "").slice(0, 200).replace(/\n/g, " ");
+    lines.push(`  ${label}: ${preview}`);
+  }
+  return lines.join("\n");
+}
+
+function buildEnvironmentContext(): string {
+  try {
+    const entries = fs.readdirSync(process.cwd(), { withFileTypes: true });
+    const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name + "/");
+    const files = entries.filter((e) => !e.isDirectory()).map((e) => e.name);
+    const listing = [...dirs, ...files].join(", ");
+    return `User environment: cwd=${process.cwd()}, platform=${process.platform}\nDirectory contents: ${listing}`;
+  } catch {
+    return `User environment: cwd=${process.cwd()}, platform=${process.platform}`;
+  }
+}
+
+async function callWithTools(
+  model: string,
+  messages: ChatMessage[],
+  opts: { temperature?: number; max_tokens?: number; signal?: AbortSignal }
+): Promise<string> {
+  let currentMessages = [...messages];
+  const addLog = useStore.getState().addLog;
+
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const resp = await chatCompletion(model, currentMessages, {
+      temperature: opts.temperature ?? 0.4,
+      max_tokens: opts.max_tokens ?? 2048,
+      signal: opts.signal,
+      tools: TOOLS as unknown[],
+    });
+
+    const choice = resp.choices[0].message;
+
+    if (!choice.tool_calls || choice.tool_calls.length === 0) {
+      return choice.content ?? "";
+    }
+
+    if (round === MAX_TOOL_ROUNDS) {
+      const finalResp = await chatCompletion(model, currentMessages, {
+        temperature: opts.temperature ?? 0.4,
+        max_tokens: opts.max_tokens ?? 2048,
+        signal: opts.signal,
+      });
+      return finalResp.choices[0].message.content ?? "";
+    }
+
+    currentMessages.push({
+      role: "assistant",
+      content: choice.content,
+      tool_calls: choice.tool_calls,
+    });
+
+    for (const toolCall of choice.tool_calls) {
+      let args: Record<string, unknown>;
+      try {
+        args = JSON.parse(toolCall.function.arguments);
+      } catch {
+        addLog({ level: "warn", source: "Swarm", message: `Bad tool args from ${toolCall.function.name}: ${toolCall.function.arguments}` });
+        args = {};
+      }
+      const result = await executeTool(toolCall.function.name, args);
+      currentMessages.push({
+        role: "tool",
+        tool_call_id: toolCall.id,
+        content: result,
+      });
+    }
+  }
+
+  return "";
+}
+
+export async function executeSwarm(userInput: string, forcedAltr?: 1 | 2 | 3, history?: ChatMessage[]): Promise<void> {
   const store = useStore.getState();
   const addMessage = store.addMessage;
   const updateMessage = store.updateMessage;
@@ -89,302 +191,318 @@ export async function executeSwarm(userInput: string, forcedAltr?: 1 | 2 | 3): P
 
   setExecuting(true);
 
+  const archMsgId = addMessage({
+    role: "head",
+    agentName: "Arch",
+    content: "",
+    status: "streaming",
+    thinking: "",
+    thinkingVisible: false,
+  });
+
   try {
     // ===== PHASE 0: HEAD =====
     const headModels = getHeadModels();
-    const headModel = headModels[0]; // Best head model
+    const rescueModelId = "meta/llama-3.3-70b-instruct";
+    const fallbackModels = [...headModels.map((m) => m.id), rescueModelId];
 
-    addLog({
-      level: "info",
-      source: "Swarm",
-      message: `HEAD activating: ${headModel.name} → analyzing task`,
-    });
+    let headContent: string | null = null;
+    let headAgentId: string | null = null;
+    let usedModel: string | null = null;
 
-    const headAgentId = addAgent({
-      name: "Head Alpha",
-      role: "head",
-      layer: 1,
-      model: headModel.id,
-      status: "working",
-      currentTask: "Planning & routing",
-    });
-
-    const headMsgId = addMessage({
-      role: "head",
-      agentName: "Head Alpha",
-      content: "",
-      layer: 1,
-      model: headModel.name,
-      status: "streaming",
-    });
-
-    const headMessages: ChatMessage[] = [
-      { role: "system", content: HEAD_SYSTEM },
-      { role: "user", content: `Task: ${userInput}\n\nCreate a structured execution plan.` },
-    ];
-
-    const headResp = await chatCompletion(headModel.id, headMessages, {
-      temperature: 0.4,
-      max_tokens: 2048,
-    });
-
-    const headContent = headResp.choices[0].message.content;
-    updateMessage(headMsgId, { content: headContent, status: "done" });
-    updateAgent(headAgentId, { status: "done" });
-
-    // Parse plan
-    let plan = parsePlan(headContent);
-    if (forcedAltr) {
-      plan.altrMode = forcedAltr;
-    }
-
-    addLog({
-      level: "info",
-      source: "Swarm",
-      message: `Plan parsed: ALTR ${plan.altrMode} | ${plan.tasks.length} tasks`,
-    });
-
-    // ===== PHASE 1: BOARD =====
-    if (plan.altrMode >= 1) {
-      const boardModels = getBoardModels();
-      const domains = ["Engineering", "Analysis", "Creative", "Strategy", "Validation"];
-
-      const boardPromises = plan.tasks.map(async (task, idx) => {
-        const domain = domains.find((d) =>
-          task.domain.toLowerCase().includes(d.toLowerCase())
-        ) ?? "Engineering";
-
-        const boardModel =
-          boardModels.find(
-            (m) => m.strengths.includes(domain.toLowerCase()) || m.categories.includes(domain.toLowerCase())
-          ) ?? boardModels[idx % boardModels.length];
-
-        const boardAgentName = `${domain} Lead`;
-        const boardAgentId = addAgent({
-          name: boardAgentName,
-          role: "board",
-          layer: 2,
-          model: boardModel.id,
-          status: "working",
-          currentTask: task.description,
-        });
-
-        const boardMsgId = addMessage({
-          role: "board",
-          agentName: boardAgentName,
-          content: "",
-          layer: 2,
-          model: boardModel.name,
-          altrMode: plan.altrMode,
-          status: "streaming",
-        });
-
-        addLog({
-          level: "info",
-          source: "Swarm",
-          message: `BOARD [${domain}] → ${boardModel.name} | ${task.description.slice(0, 50)}...`,
-        });
-
-        const boardMessages: ChatMessage[] = [
-          { role: "system", content: `${BOARD_SYSTEM}\n\nYour domain: ${domain}\nYour task: ${task.description}` },
-          {
-            role: "user",
-            content: `Original request: ${userInput}\n\nYour specific task: ${task.description}\n\nExecute this task. If you need sub-tasks delegated, list them clearly.`,
-          },
-        ];
-
-        try {
-          const resp = await chatCompletion(boardModel.id, boardMessages, {
-            temperature: 0.5,
-            max_tokens: 4096,
-          });
-          const content = resp.choices[0].message.content;
-
-          updateMessage(boardMsgId, { content, status: "done" });
-          updateAgent(boardAgentId, { status: "done" });
-
-          return { task, content, domain, boardModel, status: "done" as const };
-        } catch (err: unknown) {
-          const errorMsg = err instanceof Error ? err.message : "Unknown error";
-          updateMessage(boardMsgId, {
-            content: `Error: ${errorMsg}`,
-            status: "error",
-          });
-          updateAgent(boardAgentId, { status: "error" });
-          return { task, content: `Error: ${errorMsg}`, domain, boardModel, status: "error" as const };
-        }
+    for (const modelId of fallbackModels) {
+      addLog({
+        level: "info",
+        source: "Swarm",
+        message: `Arch activating: ${modelId}`,
       });
 
-      const boardResults = await Promise.all(boardPromises);
+      if (!headAgentId) {
+        headAgentId = addAgent({
+          name: "Head Alpha",
+          role: "head",
+          layer: 1,
+          model: modelId,
+          status: "working",
+          currentTask: "Analyzing request",
+        });
+      } else {
+        updateAgent(headAgentId, { model: modelId });
+      }
 
-      // ===== PHASE 2: MANAGERS + SUB-AGENTS (ALTR 2 & 3) =====
-      if (plan.altrMode >= 2) {
-        for (const result of boardResults) {
-          if (result.status === "error") continue;
+      updateMessage(archMsgId, { content: "Thinking..." });
 
-          // Identify sub-tasks from board output
-          const subTaskLines = result.content
-            .split("\n")
-            .filter(
-              (line) =>
-                line.toLowerCase().includes("subtask") ||
-                line.toLowerCase().includes("sub-task") ||
-                line.toLowerCase().includes("delegate") ||
-                line.toLowerCase().includes("implement") ||
-                /^\d+\.\s*\`/.test(line)
-            )
-            .slice(0, 4); // Max 4 sub-tasks per board member
+      const headMessages: ChatMessage[] = [
+        { role: "system", content: HEAD_SYSTEM },
+        { role: "system", content: buildEnvironmentContext() },
+        ...(history && history.length > 0
+          ? [{ role: "system" as const, content: buildConversationContext(history) }]
+          : []),
+        { role: "user", content: userInput },
+      ];
 
-          if (subTaskLines.length === 0) continue;
+      addLog({
+        level: "debug",
+        source: "Swarm",
+        message: `HEAD messages: ${headMessages.length} total (system + history_system + user)`,
+      });
 
-          const managerPromises = subTaskLines.map(async (subTask, idx) => {
-            const managerModel = pickModelForTask(subTask, "manager");
-            const managerName = `${result.domain} Mgr ${idx + 1}`;
+      try {
+        const headController = new AbortController();
+        const headTimer = setTimeout(() => headController.abort(), HEAD_TIMEOUT);
 
-            const managerAgentId = addAgent({
-              name: managerName,
-              role: "manager",
-              layer: 3,
-              model: managerModel.id,
-              status: "working",
-              currentTask: subTask,
-            });
+        const resp = await chatCompletion(modelId, headMessages, {
+          temperature: 0.4,
+          max_tokens: 1024,
+          signal: headController.signal,
+        });
 
-            const managerMsgId = addMessage({
-              role: "manager",
-              agentName: managerName,
-              content: "",
-              layer: 3,
-              model: managerModel.name,
-              altrMode: plan.altrMode,
-              status: "streaming",
-            });
+        clearTimeout(headTimer);
+        headContent = sanitizeHeadResponse(resp.choices[0].message.content ?? "");
+        if (!headContent) {
+          addLog({ level: "warn", source: "Swarm", message: `${modelId} returned empty content, continuing fallback chain` });
+          continue;
+        }
+        usedModel = modelId;
+        addLog({
+          level: "debug",
+          source: "Swarm",
+          message: `${modelId} responded (${(headContent ?? "").length} chars), stopping fallback chain`,
+        });
+        break;
+      } catch (headErr) {
+        const errMsg = headErr instanceof Error ? headErr.message : String(headErr);
+        addLog({ level: "warn", source: "Swarm", message: `Model ${modelId} failed: ${errMsg}` });
+      }
+    }
 
-            addLog({
-              level: "info",
-              source: "Swarm",
-              message: `MANAGER [${managerName}] → ${managerModel.name}`,
-            });
+    if (!headContent) {
+      addLog({ level: "error", source: "Swarm", message: "All head models failed" });
+      headContent = "I'm sorry, I couldn't process that right now. Could you rephrase?";
+      updateMessage(archMsgId, { content: headContent, status: "done" });
+      if (headAgentId) updateAgent(headAgentId, { status: "done" });
+      setExecuting(false);
+      return;
+    }
 
-            const mgrMessages: ChatMessage[] = [
-              {
-                role: "system",
-                content: `${BOARD_SYSTEM}\n\nYou are a Manager agent. Your parent Board member (${result.domain}) assigned you this sub-task. Execute it precisely and return results.`,
-              },
-              {
-                role: "user",
-                content: `Original request: ${userInput}\nBoard context: ${result.content.slice(0, 800)}\n\nYour sub-task: ${subTask}\n\nExecute this sub-task with full implementation details.`,
-              },
-            ];
+    if (headAgentId) updateAgent(headAgentId, { status: "done" });
 
-            try {
-              const mgrResp = await chatCompletion(managerModel.id, mgrMessages, {
-                temperature: 0.5,
-                max_tokens: 4096,
-              });
-              const mgrContent = mgrResp.choices[0].message.content;
+    // Conversational response — check if tools are needed
+    if (isConversational(headContent)) {
+      const toolKeywords = ["list", "read", "write", "create", "delete", "mkdir", "remove", "edit", "rename", "move", "grep", "search", "find", "run", "execute", "show me", "what files", "what directory", "current dir"];
+      const needsTool = toolKeywords.some((k) => userInput.toLowerCase().includes(k));
 
-              updateMessage(managerMsgId, { content: mgrContent, status: "done" });
-              updateAgent(managerAgentId, { status: "done" });
-
-              // ALTR 3: Recursive sub-agents
-              if (plan.altrMode === 3) {
-                const refineLines = mgrContent
-                  .split("\n")
-                  .filter(
-                    (line) =>
-                      line.toLowerCase().includes("refine") ||
-                      line.toLowerCase().includes("validate") ||
-                      line.toLowerCase().includes("test") ||
-                      line.toLowerCase().includes("optimize")
-                  )
-                  .slice(0, 2);
-
-                for (const refine of refineLines) {
-                  const subModel = pickModelForTask(refine, "manager");
-                  const subName = `${result.domain} Sub ${idx + 1}`;
-
-                  const subAgentId = addAgent({
-                    name: subName,
-                    role: "subagent",
-                    layer: 4,
-                    model: subModel.id,
-                    status: "working",
-                    currentTask: refine,
-                  });
-
-                  const subMsgId = addMessage({
-                    role: "subagent",
-                    agentName: subName,
-                    content: "",
-                    layer: 4,
-                    model: subModel.name,
-                    altrMode: 3,
-                    status: "streaming",
-                  });
-
-                  const subMessages: ChatMessage[] = [
-                    {
-                      role: "system",
-                      content: "You are a Sub-agent specializing in refinement, validation, and optimization. Produce concise, expert-level output.",
-                    },
-                    {
-                      role: "user",
-                      content: `Context: ${mgrContent.slice(0, 600)}\n\nRefinement task: ${refine}`,
-                    },
-                  ];
-
-                  try {
-                    const subResp = await chatCompletion(subModel.id, subMessages, {
-                      temperature: 0.4,
-                      max_tokens: 2048,
-                    });
-                    updateMessage(subMsgId, {
-                      content: subResp.choices[0].message.content,
-                      status: "done",
-                    });
-                    updateAgent(subAgentId, { status: "done" });
-                  } catch {
-                    updateAgent(subAgentId, { status: "error" });
-                  }
-                }
-              }
-
-              return { content: mgrContent };
-            } catch (err: unknown) {
-              const errorMsg = err instanceof Error ? err.message : "Unknown error";
-              updateMessage(managerMsgId, {
-                content: `Error: ${errorMsg}`,
-                status: "error",
-              });
-              updateAgent(managerAgentId, { status: "error" });
-              return { content: `Error: ${errorMsg}` };
-            }
+      if (needsTool && headAgentId) {
+        addLog({ level: "info", source: "Swarm", message: "Conversational but may need tools — retrying with tools..." });
+        updateAgent(headAgentId, { status: "working", currentTask: "Executing with tools" });
+        const toolMessages: ChatMessage[] = [
+          { role: "system", content: HEAD_SYSTEM },
+          { role: "system", content: buildEnvironmentContext() },
+          { role: "user", content: userInput },
+        ];
+        try {
+          const toolResult = await callWithTools(usedModel ?? fallbackModels[0], toolMessages, {
+            temperature: 0.4,
+            max_tokens: 2048,
           });
-
-          await Promise.all(managerPromises);
+          if (toolResult) {
+            headContent = toolResult;
+          }
+        } catch {
+          addLog({ level: "warn", source: "Swarm", message: "HEAD tool retry failed, using original response" });
         }
       }
 
-      // Final summary
-      const finalMsgId = addMessage({
-        role: "head",
-        agentName: "Head Alpha",
-        content: `✓ Swarm execution complete (ALTR ${plan.altrMode})\n${plan.tasks.length} tasks executed across ${boardResults.length} Board specialists.`,
-        layer: 1,
-        model: headModel.name,
+      updateMessage(archMsgId, {
+        content: headContent,
+        status: "done",
+        thinking: "",
+        thinkingVisible: false,
+      });
+      setExecuting(false);
+      return;
+    }
+
+    // ===== FULL SWARM MODE =====
+    let plan = parsePlan(headContent);
+    if (forcedAltr) plan.altrMode = forcedAltr;
+
+    if (plan.tasks.length === 0 || plan.tasks.every((t) => !t.description.trim())) {
+      updateMessage(archMsgId, {
+        content: headContent || "I couldn't parse that request. Could you rephrase?",
         status: "done",
       });
+      setExecuting(false);
+      return;
     }
+
+    updateMessage(archMsgId, {
+      content: `Analyzing: ${plan.thought || "Processing your request..."}`,
+      thinking: headContent,
+      thinkingVisible: false,
+    });
+
+    addLog({
+      level: "info",
+      source: "Swarm",
+      message: `Plan: ALTR ${plan.altrMode} | ${plan.tasks.length} tasks`,
+    });
+
+    // ===== PHASE 1: BOARD (sequential) =====
+    const boardModels = getBoardModels();
+    const domains = ["Engineering", "Analysis", "Creative", "Strategy", "Validation"];
+    const accumulatedOutputs: string[] = [];
+    const conversationContext = buildConversationContext(history);
+
+    async function executeBoard(modelId: string, msgs: ChatMessage[]): Promise<string | null> {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), BOARD_TIMEOUT);
+        const content = await callWithTools(modelId, msgs, {
+          temperature: 0.4,
+          max_tokens: 2048,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        return content;
+      } catch (err) {
+        addLog({ level: "error", source: "Swarm", message: `Board execution error: ${err instanceof Error ? err.message : String(err)}` });
+      return null;
+    }
+  }
+
+  async function executeManager(modelId: string, msgs: ChatMessage[]): Promise<string | null> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), MANAGER_TIMEOUT);
+      const content = await callWithTools(modelId, msgs, {
+        temperature: 0.4,
+        max_tokens: 2048,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      return content;
+    } catch (err) {
+      addLog({ level: "error", source: "Swarm", message: `Manager execution error: ${err instanceof Error ? err.message : String(err)}` });
+      return null;
+    }
+  }
+
+  for (const [idx, task] of plan.tasks.entries()) {
+      const domain = domains.find((d) =>
+        task.domain.toLowerCase().includes(d.toLowerCase())
+      ) ?? "Engineering";
+
+      const boardModel =
+        boardModels.find(
+          (m) => m.strengths.includes(domain.toLowerCase()) || m.categories.includes(domain.toLowerCase())
+        ) ?? boardModels[idx % boardModels.length];
+
+      const boardAgentId = addAgent({
+        name: `${domain} Lead`,
+        role: "board",
+        layer: 2,
+        model: boardModel.id,
+        status: "working",
+        currentTask: task.description,
+      });
+
+      addLog({
+        level: "info",
+        source: "Swarm",
+        message: `BOARD [${domain}] → ${boardModel.name}`,
+      });
+
+      updateMessage(archMsgId, { content: `${domain}: executing...` });
+
+      const boardMessages: ChatMessage[] = [
+        { role: "system", content: `${BOARD_SYSTEM}\n\nYour domain: ${domain}\nTask: ${task.description}${conversationContext ? `\n\n${conversationContext}` : ""}` },
+        { role: "user", content: `Original request: ${userInput}\n\nYour specific task: ${task.description}\n\nComplete this task. Respond with your result.` },
+      ];
+
+      let boardContent: string | null = null;
+
+      // Try with tools first
+      boardContent = await executeBoard(boardModel.id, boardMessages);
+      if (boardContent === null) {
+        addLog({ level: "warn", source: "Swarm", message: `Board [${domain}] tools failed on ${boardModel.id}, retrying with rescue model...` });
+        const plainMsgs: ChatMessage[] = [
+          { role: "system", content: `${BOARD_SYSTEM}\n\nYour domain: ${domain}\nTask: ${task.description}${conversationContext ? `\n\n${conversationContext}` : ""}` },
+          { role: "user", content: `Original request: ${userInput}\n\nYour specific task: ${task.description}\n\nComplete this task. Respond with your result in plain text only.` },
+        ];
+        boardContent = await executeBoard(rescueModelId, plainMsgs);
+        if (boardContent === null) {
+          addLog({ level: "error", source: "Swarm", message: `Board [${domain}] rescue model also failed` });
+          updateAgent(boardAgentId, { status: "error" });
+          accumulatedOutputs.push(`**${domain}**: Unable to complete`);
+          continue;
+        }
+      }
+
+      const cleanContent = sanitizeHeadResponse(boardContent);
+      updateAgent(boardAgentId, { status: "done" });
+      accumulatedOutputs.push(`**${domain}**:\n${cleanContent}`);
+    }
+
+    // ===== PHASE 2: MANAGERS (ALTR 2+, sequential) =====
+    if (plan.altrMode >= 2) {
+      for (const result of plan.tasks.map((task, i): { content: string; task: typeof task; status: string } => ({ content: accumulatedOutputs[i] ?? "", task, status: accumulatedOutputs[i] ? "done" : "error" }))) {
+        if (result.status === "error") continue;
+
+        const subTaskLines = result.content
+          .split("\n")
+          .filter(
+            (line) =>
+              line.toLowerCase().includes("subtask") ||
+              line.toLowerCase().includes("sub-task") ||
+              line.toLowerCase().includes("delegate")
+          )
+          .slice(0, 1);
+
+        if (subTaskLines.length === 0) continue;
+
+        for (const subTask of subTaskLines) {
+          const managerModel = pickModelForTask(subTask, "manager");
+
+          const mgrMessages: ChatMessage[] = [
+            { role: "system", content: `You are a Manager agent. ${BOARD_SYSTEM}${conversationContext ? `\n\n${conversationContext}` : ""}` },
+            { role: "user", content: `Original request: ${userInput}\nBoard context: ${result.content.slice(0, 600)}\n\nSub-task: ${subTask}\n\nComplete this sub-task. Respond with your result in plain text only.` },
+          ];
+
+          let mgrContent: string | null = await executeManager(managerModel.id, mgrMessages);
+          if (mgrContent === null) {
+            addLog({ level: "warn", source: "Swarm", message: `Manager tools failed, retrying with rescue model...` });
+            const plainMsgs: ChatMessage[] = [
+              { role: "system", content: `You are a Manager agent. ${BOARD_SYSTEM}${conversationContext ? `\n\n${conversationContext}` : ""}` },
+              { role: "user", content: `Original request: ${userInput}\nBoard context: ${result.content.slice(0, 600)}\n\nSub-task: ${subTask}\n\nComplete this sub-task. Respond with your result in plain text only.` },
+            ];
+            mgrContent = await executeManager(rescueModelId, plainMsgs);
+          }
+
+          if (mgrContent) {
+            accumulatedOutputs.push(`**Sub-task**:\n${sanitizeHeadResponse(mgrContent)}`);
+          }
+        }
+      }
+    }
+
+    // ===== FINAL =====
+    const finalOutput = accumulatedOutputs.join("\n\n---\n\n");
+    updateMessage(archMsgId, {
+      content: finalOutput || headContent,
+      status: "done",
+      thinking: headContent,
+      thinkingVisible: false,
+    });
   } catch (err: unknown) {
     const errorMsg = err instanceof Error ? err.message : "Unknown error";
     addLog({ level: "error", source: "Swarm", message: `Execution failed: ${errorMsg}` });
-    addMessage({
-      role: "system",
-      content: `❌ Swarm execution error: ${errorMsg}`,
+    updateMessage(archMsgId, {
+      content: `Error: ${errorMsg}`,
       status: "error",
     });
   } finally {
     setExecuting(false);
+    store.cleanupAgents();
   }
 }

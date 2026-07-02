@@ -17,7 +17,7 @@ export function SplashScreen(): JSX.Element {
       height={height}
     >
       <Gradient name="retro">
-        <BigText text="ARCH XC" font="block" />
+        <BigText text="ARCH XC" font="simple" />
       </Gradient>
 
       <Box marginTop={1}>

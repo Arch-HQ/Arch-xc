@@ -2,13 +2,6 @@ import React from "react";
 import { Box, Text, useInput } from "ink";
 import { useStore } from "../store/index.js";
 
-/**
- * Sidebar — Left navigation sidebar.
- * Width: 25 characters.
- * Items: Chat, Agents, Logs, Models, Settings with icons and badges.
- * Focus-aware highlighting with cyan/bright background.
- */
-
 interface SidebarItemDef {
   label: string;
   icon: string;
@@ -29,7 +22,6 @@ export function Sidebar(): JSX.Element {
   const setSidebarItem = useStore((s) => s.setSidebarItem);
   const agents = useStore((s) => s.agents);
   const logs = useStore((s) => s.logs);
-  const screen = useStore((s) => s.screen);
   const setScreen = useStore((s) => s.setScreen);
   const setSettingsTab = useStore((s) => s.setSettingsTab);
 
@@ -65,8 +57,6 @@ export function Sidebar(): JSX.Element {
             setScreen("settings");
             break;
           default:
-            // "agents", "logs", "models" views — for now stay on main
-            // (these can be wired to sub-views inside MainScreen later)
             setScreen("main");
             break;
         }
@@ -94,7 +84,6 @@ export function Sidebar(): JSX.Element {
             : "cyanBright"
           : "white";
 
-        // Compute badge text
         let badgeText = "";
         if (item.label === "Agents" && activeAgentCount > 0) {
           badgeText = String(activeAgentCount);

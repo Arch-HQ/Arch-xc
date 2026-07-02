@@ -141,7 +141,8 @@ export const MODEL_POOL: ModelEntry[] = [
     tier: "board",
   },
   {
-    id: "minimax/minimax-m2.7",
+    // NOTE: API returns "minimaxai/minimax-m2.7" — verified live 2026-07-02
+    id: "minimaxai/minimax-m2.7",
     name: "MiniMax M2.7",
     org: "MiniMax",
     categories: ["coding"],
@@ -152,7 +153,8 @@ export const MODEL_POOL: ModelEntry[] = [
     tier: "board",
   },
   {
-    id: "stepfun/step-3.5-flash",
+    // NOTE: API returns "stepfun-ai/step-3.5-flash" — verified live 2026-07-02
+    id: "stepfun-ai/step-3.5-flash",
     name: "Step 3.5 Flash",
     org: "Stepfun",
     categories: ["coding"],
@@ -198,7 +200,8 @@ export const MODEL_POOL: ModelEntry[] = [
     tier: "manager",
   },
   {
-    id: "bytedance-research/seed-oss-36b-instruct",
+    // NOTE: API returns "bytedance/seed-oss-36b-instruct" — verified live 2026-07-02
+    id: "bytedance/seed-oss-36b-instruct",
     name: "Seed OSS 36B",
     org: "ByteDance",
     categories: ["reasoning"],
@@ -208,17 +211,18 @@ export const MODEL_POOL: ModelEntry[] = [
     rank: 12,
     tier: "manager",
   },
-  {
-    id: "thudm/glm-5.1",
-    name: "GLM 5.1",
-    org: "Zhipu AI",
-    categories: ["coding"],
-    description: "Flagship LLM for agentic workflows and planning",
-    contextWindow: 128_000,
-    strengths: ["coding", "agent", "planning"],
-    rank: 13,
-    tier: "manager",
-  },
+  // DEAD: thudm/glm-5.1 — not found in NIM API as of 2026-07-02
+  // {
+  //   id: "thudm/glm-5.1",
+  //   name: "GLM 5.1",
+  //   org: "Zhipu AI",
+  //   categories: ["coding"],
+  //   description: "Flagship LLM for agentic workflows and planning",
+  //   contextWindow: 128_000,
+  //   strengths: ["coding", "agent", "planning"],
+  //   rank: 13,
+  //   tier: "manager",
+  // },
   {
     id: "openai/gpt-oss-120b",
     name: "GPT-OSS 120B",
@@ -242,7 +246,8 @@ export const MODEL_POOL: ModelEntry[] = [
     tier: "manager",
   },
   {
-    id: "sarvam-ai/sarvam-m",
+    // NOTE: API returns "sarvamai/sarvam-m" — verified live 2026-07-02
+    id: "sarvamai/sarvam-m",
     name: "Sarvam M",
     org: "Sarvam AI",
     categories: ["coding"],
@@ -264,7 +269,8 @@ export const MODEL_POOL: ModelEntry[] = [
     tier: "manager",
   },
   {
-    id: "stepfun/step-3.7-flash",
+    // NOTE: API returns "stepfun-ai/step-3.7-flash" — verified live 2026-07-02
+    id: "stepfun-ai/step-3.7-flash",
     name: "Step 3.7 Flash",
     org: "Stepfun",
     categories: ["vision"],
@@ -275,7 +281,8 @@ export const MODEL_POOL: ModelEntry[] = [
     tier: "manager",
   },
   {
-    id: "nvidia/nemotron-nano-9b-v2",
+    // NOTE: API returns "nvidia/nvidia-nemotron-nano-9b-v2" — verified live 2026-07-02
+    id: "nvidia/nvidia-nemotron-nano-9b-v2",
     name: "Nemotron Nano 9B v2",
     org: "NVIDIA",
     categories: ["reasoning"],
